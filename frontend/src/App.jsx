@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowRight,
@@ -16,6 +16,9 @@ import {
   Star,
   Truck,
   X,
+  Minus,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { formatPrice } from "./format.js";
 
@@ -45,8 +48,7 @@ const initialMessages = [
   },
 ];
 
-function ProductCard({ product, onAdd }) {
-  const [saved, setSaved] = useState(false);
+function ProductCard({ product, saved, onToggleFavorite, onAdd }) {
   const art = productArt[product.category] || productArt.Audio;
 
   return (
@@ -56,7 +58,7 @@ function ProductCard({ product, onAdd }) {
         <button
           className={`favorite-button ${saved ? "is-saved" : ""}`}
           aria-label={saved ? "Remove from wishlist" : "Add to wishlist"}
-          onClick={() => setSaved((value) => !value)}
+          onClick={() => onToggleFavorite(product.id)}
         >
           <Heart size={17} fill={saved ? "currentColor" : "none"} />
         </button>
@@ -76,6 +78,59 @@ function ProductCard({ product, onAdd }) {
         </div>
       </div>
     </article>
+  );
+}
+
+function BagPanel({ cart, onClose, onChangeQuantity, onRemove, onCheckout, checkout }) {
+  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+  return (
+    <div className="bag-overlay" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="bag-panel" role="dialog" aria-modal="true" aria-labelledby="bag-title">
+        <header className="bag-header">
+          <div><span className="eyebrow section-eyebrow">YOUR GOOD FINDS</span><h2 id="bag-title">Your bag <span>({cart.reduce((sum, item) => sum + item.quantity, 0)})</span></h2></div>
+          <button className="icon-button bag-close" aria-label="Close bag" onClick={onClose}><X size={20} /></button>
+        </header>
+        {checkout.orderId && <p className="checkout-success" role="status">Order #{checkout.orderId} placed. Thanks for shopping with us!</p>}
+        {checkout.error && <p className="checkout-error" role="alert">{checkout.error}</p>}
+        {cart.length === 0 ? (
+          <div className="bag-empty"><ShoppingBag size={30} /><strong>Your bag is taking a breather.</strong><span>Add something lovely to get started.</span><button onClick={onClose}>Keep browsing</button></div>
+        ) : (
+          <>
+            <div className="bag-items">
+              {cart.map((item) => {
+                const art = productArt[item.category] || productArt.Audio;
+                return (
+                  <article className="bag-item" key={item.id}>
+                    <div className={`bag-item-art ${art.color}`} aria-hidden="true">{art.emoji}</div>
+                    <div className="bag-item-copy">
+                      <strong>{item.name}</strong><span>{formatPrice(item.price)}</span>
+                      <div className="quantity-control" aria-label={`${item.name} quantity`}>
+                        <button aria-label={`Decrease ${item.name} quantity`} onClick={() => onChangeQuantity(item.id, item.quantity - 1)}><Minus size={13} /></button>
+                        <span>{item.quantity}</span>
+                        <button aria-label={`Increase ${item.name} quantity`} onClick={() => onChangeQuantity(item.id, item.quantity + 1)} disabled={item.quantity >= item.stock}><Plus size={13} /></button>
+                        <button className="remove-item" aria-label={`Remove ${item.name}`} onClick={() => onRemove(item.id)}><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                    <strong className="bag-item-total">{formatPrice(item.price * item.quantity)}</strong>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="bag-summary">
+              <div><span>Subtotal</span><strong>{formatPrice(total)}</strong></div>
+              <small>Shipping is on us for orders over ₹999.</small>
+              <button className="checkout-button" onClick={onCheckout} disabled={checkout.loading}>
+                {checkout.loading ? "Placing your order…" : <>Place demo order <ArrowRight size={16} /></>}
+              </button>
+              <small className="demo-checkout-note">Demo checkout places an order in the ShopKart API; no payment is collected.</small>
+            </div>
+          </>
+        )}
+      </aside>
+    </div>
   );
 }
 
@@ -168,8 +223,15 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState([]);
   const [chatOpen, setChatOpen] = useState(false);
+  const [bagOpen, setBagOpen] = useState(false);
+  const [exploreOpen, setExploreOpen] = useState(false);
+  const [wishlist, setWishlist] = useState(() => new Set());
+  const [wishlistOnly, setWishlistOnly] = useState(false);
+  const [sortOrder, setSortOrder] = useState("rating");
+  const [checkout, setCheckout] = useState({ loading: false, error: "", orderId: null });
   const [toast, setToast] = useState("");
   const [loadError, setLoadError] = useState(false);
+  const searchInput = useRef(null);
 
   useEffect(() => {
     fetch(`${API_URL}/api/products`)
@@ -181,38 +243,113 @@ export default function App() {
       .catch(() => setLoadError(true));
   }, []);
 
+  useEffect(() => {
+    function handleShortcut(event) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInput.current?.focus();
+      }
+      if (event.key === "Escape") {
+        setBagOpen(false);
+        setExploreOpen(false);
+        setChatOpen(false);
+      }
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
+
   const filteredProducts = useMemo(() => products.filter((product) => {
     const matchesCategory = activeCategory === "All" || product.category === activeCategory;
     const term = search.trim().toLowerCase();
     const matchesSearch = !term || `${product.name} ${product.brand} ${product.category} ${product.description} ${(product.tags || []).join(" ")}`.toLowerCase().includes(term);
-    return matchesCategory && matchesSearch;
-  }), [products, activeCategory, search]);
+    const matchesWishlist = !wishlistOnly || wishlist.has(product.id);
+    return matchesCategory && matchesSearch && matchesWishlist;
+  }).sort((a, b) => {
+    if (sortOrder === "price-low") return a.price - b.price;
+    if (sortOrder === "price-high") return b.price - a.price;
+    if (sortOrder === "name") return a.name.localeCompare(b.name);
+    return b.rating - a.rating;
+  }), [products, activeCategory, search, wishlistOnly, wishlist, sortOrder]);
 
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
 
   function addToCart(product) {
+    const current = cart.find((item) => item.id === product.id);
+    if ((current?.quantity ?? 0) >= product.stock) {
+      setToast(`Only ${product.stock} ${product.name} available`);
+      window.setTimeout(() => setToast(""), 2600);
+      return;
+    }
     setCart((items) => {
-      const current = items.find((item) => item.id === product.id);
-      if (current) return items.map((item) => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+      if (items.some((item) => item.id === product.id)) return items.map((item) => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
       return [...items, { ...product, quantity: 1 }];
     });
+    setCheckout({ loading: false, error: "", orderId: null });
     setToast(`${product.name} added to your bag`);
     window.setTimeout(() => setToast(""), 2600);
   }
 
+  function changeQuantity(productId, quantity) {
+    setCart((items) => items.map((item) => item.id === productId
+      ? { ...item, quantity: Math.min(item.stock, Math.max(0, quantity)) }
+      : item).filter((item) => item.quantity > 0));
+    setCheckout({ loading: false, error: "", orderId: null });
+  }
+
+  function toggleFavorite(productId) {
+    setWishlist((current) => {
+      const next = new Set(current);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  }
+
+  async function placeOrder() {
+    setCheckout({ loading: true, error: "", orderId: null });
+    try {
+      const response = await fetch(`${API_URL}/api/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerId: 1,
+          items: cart.map(({ id, quantity }) => ({ productId: id, quantity })),
+        }),
+      });
+      const order = await response.json();
+      if (!response.ok) throw new Error(order.detail || `Order request failed (${response.status})`);
+      setCart([]);
+      setCheckout({ loading: false, error: "", orderId: order.id });
+      try {
+        const catalog = await fetch(`${API_URL}/api/products`);
+        if (!catalog.ok) throw new Error(`Catalog refresh failed (${catalog.status})`);
+        setProducts(await catalog.json());
+        setLoadError(false);
+      } catch {
+        setLoadError(true);
+      }
+    } catch (error) {
+      setCheckout({ loading: false, error: `We couldn’t place your order. ${error.message}`, orderId: null });
+    }
+  }
+
   return (
-    <div className="app-shell">
+    <div className="app-shell" id="top">
       <div className="announcement"><Sparkles size={14} /> Thoughtful finds, delivered with a little help from AI. <span>Meet your shopping sidekick <ArrowRight size={13} /></span></div>
       <header className="site-header">
-        <a className="wordmark" href="#" aria-label="ShopKart home"><span className="brand-mark">s<span>.</span></span>shopkart</a>
+        <a className="wordmark" href="#top" aria-label="ShopKart home"><span className="brand-mark">s<span>.</span></span>shopkart</a>
         <nav className="main-nav" aria-label="Main navigation">
           <a className="nav-active" href="#shop">Shop</a>
           <a href="#why-shopkart">Our story</a>
-          <button className="nav-dropdown">Explore <ChevronDown size={14} /></button>
+          <div className="nav-explore">
+            <button className="nav-dropdown" aria-expanded={exploreOpen} onClick={() => setExploreOpen((open) => !open)}>Explore <ChevronDown size={14} /></button>
+            {exploreOpen && <div className="explore-menu" role="menu">{categories.map((category) => <button key={category} role="menuitem" onClick={() => { setActiveCategory(category); setWishlistOnly(false); setExploreOpen(false); document.getElementById("shop")?.scrollIntoView({ behavior: "smooth" }); }}>{category}</button>)}</div>}
+          </div>
         </nav>
         <div className="header-actions">
-          <label className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find your thing..." aria-label="Search products" /><kbd>⌘ K</kbd></label>
-          <button className="bag-button" aria-label={`Shopping bag, ${cartCount} items`}><ShoppingBag size={19} /><span>Bag</span><b>{cartCount}</b></button>
+        <label className="search-box"><Search size={16} /><input ref={searchInput} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find your thing..." aria-label="Search products" /><kbd>⌘ K</kbd></label>
+        <button className="bag-button" aria-label={`Shopping bag, ${cartCount} items`} onClick={() => setBagOpen(true)}><ShoppingBag size={19} /><span>Bag</span><b>{cartCount}</b></button>
         </div>
       </header>
 
@@ -247,14 +384,15 @@ export default function App() {
           </div>
           <div className="shop-toolbar">
             <div className="category-tabs" role="tablist" aria-label="Filter by category">
-              {categories.map((category) => <button key={category} className={activeCategory === category ? "active" : ""} onClick={() => setActiveCategory(category)} role="tab" aria-selected={activeCategory === category}>{category}<span>{category === "All" ? products.length : products.filter((product) => product.category === category).length}</span></button>)}
+              {categories.map((category) => <button key={category} className={activeCategory === category && !wishlistOnly ? "active" : ""} onClick={() => { setActiveCategory(category); setWishlistOnly(false); }} role="tab" aria-selected={activeCategory === category && !wishlistOnly}>{category}<span>{category === "All" ? products.length : products.filter((product) => product.category === category).length}</span></button>)}
+              <button className={`wishlist-tab ${wishlistOnly ? "active" : ""}`} onClick={() => setWishlistOnly((value) => !value)} role="tab" aria-selected={wishlistOnly}><Heart size={12} /> Saved <span>{wishlist.size}</span></button>
             </div>
-            <div className="sort-label">SORT BY <button>Most loved <ChevronDown size={14} /></button></div>
+            <label className="sort-label">SORT BY <select aria-label="Sort products" value={sortOrder} onChange={(event) => setSortOrder(event.target.value)}><option value="rating">Most loved</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="name">Name: A to Z</option></select></label>
           </div>
           {loadError && <p className="api-notice">Showing the sample collection. Start the backend to load live inventory.</p>}
           <div className="product-grid">
-            {filteredProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={addToCart} />)}
-            {filteredProducts.length === 0 && <div className="empty-state"><Search size={25} /><strong>No finds just yet.</strong><span>Try another search or category.</span></div>}
+            {filteredProducts.map((product) => <ProductCard key={product.id} product={product} saved={wishlist.has(product.id)} onToggleFavorite={toggleFavorite} onAdd={addToCart} />)}
+            {filteredProducts.length === 0 && <div className="empty-state"><Search size={25} /><strong>{wishlistOnly && wishlist.size === 0 ? "Nothing saved just yet." : "No finds just yet."}</strong><span>{wishlistOnly ? "Tap a product heart to save it here." : "Try another search or category."}</span></div>}
           </div>
         </section>
 
@@ -266,12 +404,13 @@ export default function App() {
         </section>
       </main>
 
-      <footer className="site-footer"><a className="wordmark" href="#"><span className="brand-mark">s<span>.</span></span>shopkart</a><span>Good finds. Good feelings. © 2026 ShopKart.</span><a href="#shop">Back to the good stuff <ArrowUp size={13} /></a></footer>
+      <footer className="site-footer"><a className="wordmark" href="#top"><span className="brand-mark">s<span>.</span></span>shopkart</a><span>Good finds. Good feelings. © 2026 ShopKart.</span><a href="#shop">Back to the good stuff <ArrowUp size={13} /></a></footer>
 
       <button className={`chat-launcher ${chatOpen ? "chat-active" : ""}`} onClick={() => setChatOpen((open) => !open)} aria-label={chatOpen ? "Close shopping assistant" : "Open shopping assistant"}>
         {chatOpen ? <X size={21} /> : <><MessageCircle size={20} /><span>Ask ShopKart</span><span className="launcher-sparkle"><Sparkles size={12} /></span></>}
       </button>
       {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
+      {bagOpen && <BagPanel cart={cart} onClose={() => setBagOpen(false)} onChangeQuantity={changeQuantity} onRemove={(id) => changeQuantity(id, 0)} onCheckout={placeOrder} checkout={checkout} />}
       {toast && <div className="toast"><span><Check size={14} /></span>{toast}</div>}
     </div>
   );

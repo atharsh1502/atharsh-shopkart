@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: shopkart-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: SHOPKART_AI_ENABLED
+        value: "false"
+      - key: SHOPKART_FRONTEND_ORIGINS
+        sync: false
