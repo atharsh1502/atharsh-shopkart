@@ -4,7 +4,6 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -29,7 +28,6 @@ public class AiChatService implements ChatService {
                         customer explicitly asks to purchase, confirms the product, and gives a quantity.
                         The demo customer ID is 1. Keep answers concise and helpful.
                         """)
-                .defaultAdvisors(new SimpleLoggerAdvisor())
                 .build();
         this.tools = tools;
     }

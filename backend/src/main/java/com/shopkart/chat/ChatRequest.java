@@ -22,7 +22,7 @@ public record ChatRequest(
     }
 
     public record ChatTurn(
-            @Pattern(regexp = "user|assistant") String role,
+            @NotBlank @Pattern(regexp = "user|assistant") String role,
             @NotBlank @Size(max = 2000) String content) {
     }
 }
